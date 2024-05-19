@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 
 <h1 align="center">
   <br>
@@ -64,3 +65,6 @@ Multi-threading can incredibly minimize the overall speed when you have a lot of
 
 ### License
 Hash-Buster is licensed under [MIT License](https://github.com/s0md3v/Hash-Buster/blob/master/LICENSE).
+=======
+# Cyber_Security_Project
+>>>>>>> d55dda25ecfa3f0e0bf68ecb092d72b1d8218087
