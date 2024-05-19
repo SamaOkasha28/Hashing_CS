@@ -3,17 +3,12 @@
 import re
 import os
 import requests
-import argparse
 import concurrent.futures
+from flask import Flask, request, jsonify
 
-parser = argparse.ArgumentParser()
-parser.add_argument('-s', help='hash', dest='hash')
-parser.add_argument('-f', help='file containing hashes', dest='file')
-parser.add_argument('-d', help='directory containing hashes', dest='dir')
-parser.add_argument('-t', help='number of threads', dest='threads', type=int)
-args = parser.parse_args()
+app = Flask(__name__)
 
-#Colors and shit like that
+# Colors and logging
 end = '\033[0m'
 red = '\033[91m'
 green = '\033[92m'
@@ -27,14 +22,8 @@ bad = '\033[91m[-]\033[0m'
 info = '\033[93m[!]\033[0m'
 good = '\033[92m[+]\033[0m'
 
-cwd = os.getcwd()
-directory = args.dir
-file = args.file
-thread_count = args.threads or 4
-
-if directory:
-    if directory[-1] == '/':
-        directory = directory[:-1]
+thread_count = 4
+result = {}
 
 def alpha(hashvalue, hashtype):
     return False
@@ -55,12 +44,6 @@ def gamma(hashvalue, hashtype):
         return False
 
 def delta(hashvalue, hashtype):
-    #data = {'auth':'8272hgt', 'hash':hashvalue, 'string':'','Submit':'Submit'}
-    #response = requests.post('http://hashcrack.com/index.php' , data).text
-    #match = re.search(r'<span class=hervorheb2>(.*?)</span></div></TD>', response)
-    #if match:
-    #    return match.group(1)
-    #else:
     return False
 
 def theta(hashvalue, hashtype):
@@ -70,74 +53,71 @@ def theta(hashvalue, hashtype):
     else:
         return False
 
-print ('''\033[1;97m_  _ ____ ____ _  _    ___  _  _ ____ ___ ____ ____
-|__| |__| [__  |__|    |__] |  | [__   |  |___ |__/
-|  | |  | ___] |  |    |__] |__| ___]  |  |___ |  \  %sv3.0\033[0m\n''' % red)
-
 md5 = [gamma, alpha, beta, theta, delta]
 sha1 = [alpha, beta, theta, delta]
 sha256 = [alpha, beta, theta]
 sha384 = [alpha, beta, theta]
 sha512 = [alpha, beta, theta]
 
-def crack(hashvalue):
-    result = False
-    if len(hashvalue) == 32:
-        if not file:
-            print ('%s Hash function : MD5' % info)
-        for api in md5:
-            r = api(hashvalue, 'md5')
-            if r:
-                return r
-    elif len(hashvalue) == 40:
-        if not file:
-            print ('%s Hash function : SHA1' % info)
-        for api in sha1:
-            r = api(hashvalue, 'sha1')
-            if r:
-                return r
-    elif len(hashvalue) == 64:
-        if not file:
-            print ('%s Hash function : SHA-256' % info)
-        for api in sha256:
-            r = api(hashvalue, 'sha256')
-            if r:
-                return r
-    elif len(hashvalue) == 96:
-        if not file:
-            print ('%s Hash function : SHA-384' % info)
-        for api in sha384:
-            r = api(hashvalue, 'sha384')
-            if r:
-                return r
-    elif len(hashvalue) == 128:
-        if not file:
-            print ('%s Hash function : SHA-512' % info)
-        for api in sha512:
-            r = api(hashvalue, 'sha512')
-            if r:
-                return r
+def identify_hash(hashvalue):
+    """Identify the type of the given hash based on its length."""
+    hash_length = len(hashvalue)
+    if hash_length == 32:
+        return 'md5', md5
+    elif hash_length == 40:
+        return 'sha1', sha1
+    elif hash_length == 64:
+        return 'sha256', sha256
+    elif hash_length == 96:
+        return 'sha384', sha384
+    elif hash_length == 128:
+        return 'sha512', sha512
     else:
-        if not file:
-            print ('%s This hash type is not supported.' % bad)
-            quit()
-        else:
-            return False
+        return None, None
 
-result = {}
+def crack(hashvalue):
+    hashtype, apis = identify_hash(hashvalue)
+    if not hashtype:
+        return None, 'Unsupported hash length'
+
+    for api in apis:
+        try:
+            result = api(hashvalue, hashtype)
+            if result:
+                return result, None
+        except Exception as e:
+            return None, f'Error executing API: {str(e)}'
+    return None, 'Hash not found in any database'
 
 def threaded(hashvalue):
-    resp = crack(hashvalue)
+    resp, error = crack(hashvalue)
     if resp:
-        print (hashvalue + ' : ' + resp)
         result[hashvalue] = resp
 
 def grepper(directory):
-    os.system('''grep -Pr "[a-f0-9]{128}|[a-f0-9]{96}|[a-f0-9]{64}|[a-f0-9]{40}|[a-f0-9]{32}" %s --exclude=\*.{png,jpg,jpeg,mp3,mp4,zip,gz} |
-        grep -Po "[a-f0-9]{128}|[a-f0-9]{96}|[a-f0-9]{64}|[a-f0-9]{40}|[a-f0-9]{32}" >> %s/%s.txt''' % (directory, cwd, directory.split('/')[-1]))
-    print ('%s Results saved in %s.txt' % (info, directory.split('/')[-1]))
+    hash_pattern = re.compile(r'[a-f0-9]{32}|[a-f0-9]{40}|[a-f0-9]{64}|[a-f0-9]{96}|[a-f0-9]{128}')
+    found_hashes = set()
+    for root, dirs, files in os.walk(directory):
+        for file in files:
+            if not file.endswith(('.png', '.jpg', '.jpeg', '.mp3', '.mp4', '.zip', '.gz')):
+                file_path = os.path.join(root, file)
+                try:
+                    with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                        contents = f.read()
+                        matches = hash_pattern.findall(contents)
+                        if matches:
+                            found_hashes.update(matches)
+                except Exception as e:
+                    print(f'{bad} Error reading file {file_path}: {e}')
+    
+    result_file = os.path.join(os.getcwd(), f'{os.path.basename(directory)}.txt')
+    with open(result_file, 'w') as f:
+        for hash_value in found_hashes:
+            f.write(f'{hash_value}\n')
+    
+    return f'Results saved in {result_file}'
 
-def miner(file):
+def miner(file, thread_count):
     lines = []
     found = set()
     with open(file, 'r') as f:
@@ -148,35 +128,49 @@ def miner(file):
         if matches:
             for match in matches:
                 found.add(match)
-    print ('%s Hashes found: %i' % (info, len(found)))
     threadpool = concurrent.futures.ThreadPoolExecutor(max_workers=thread_count)
     futures = (threadpool.submit(threaded, hashvalue) for hashvalue in found)
-    for i, _ in enumerate(concurrent.futures.as_completed(futures)):
-        if i + 1 == len(found) or (i + 1) % thread_count == 0:
-            print('%s Progress: %i/%i' % (info, i + 1, len(found)), end='\r')
+    for _ in concurrent.futures.as_completed(futures):
+        pass
+    return {hashvalue: result[hashvalue] for hashvalue in found if hashvalue in result}
 
-def single(args):
-    result = crack(args.hash)
+@app.route('/crack_single', methods=['POST'])
+@app.route('/crack_single', methods=['POST'])
+def crack_single():
+    data = request.json
+    hashvalue = data.get('hash')
+    if not hashvalue:
+        return jsonify({'error': 'No hash provided'}), 400
+    
+    hashtype, _ = identify_hash(hashvalue)
+    if not hashtype:
+        return jsonify({'error': 'Unsupported hash length'}), 400
+    
+    result, error = crack(hashvalue)
     if result:
-        print (result)
+        return jsonify({'hash': hashvalue, 'hash_type': hashtype, 'result': result})
     else:
-        print ('%s Hash was not found in any database.' % bad)
+        return jsonify({'error': error}), 404
 
-if directory:
-    try:
-        grepper(directory)
-    except KeyboardInterrupt:
-        pass
 
-elif file:
-    try:
-        miner(file)
-    except KeyboardInterrupt:
-        pass
-    with open('cracked-%s' % file.split('/')[-1], 'w+') as f:
-        for hashvalue, cracked in result.items():
-            f.write(hashvalue + ':' + cracked + '\n')
-    print ('%s Results saved in cracked-%s' % (info, file.split('/')[-1]))
+@app.route('/crack_file', methods=['POST'])
+def crack_file():
+    data = request.json
+    file_path = data.get('file_path')
+    thread_count = data.get('thread_count', 4)
+    if not file_path or not os.path.exists(file_path):
+        return jsonify({'error': 'Invalid file path'}), 400
+    results = miner(file_path, thread_count)
+    return jsonify(results)
 
-elif args.hash:
-    single(args)
+@app.route('/crack_directory', methods=['POST'])
+def crack_directory():
+    data = request.json
+    directory = data.get('directory')
+    if not directory or not os.path.exists(directory):
+        return jsonify({'error': 'Invalid directory path'}), 400
+    result_message = grepper(directory)
+    return jsonify({'message': result_message})
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000)
